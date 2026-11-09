@@ -1,4 +1,0 @@
-chest 24
-triceps 18
-shoulders 22
-biceps 27
