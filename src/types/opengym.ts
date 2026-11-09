@@ -138,4 +138,5 @@ export interface TimelinePoint {
   volume: number
   sets: number
   reps: number
+  workoutNames: string[]
 }

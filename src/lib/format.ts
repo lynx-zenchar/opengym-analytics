@@ -8,6 +8,17 @@ export const formatWeight = (value: number) => `${formatNumber(value, value % 1 
 
 export const formatVolume = (value: number) => `${formatNumber(value)} lb`
 
+export const formatDuration = (minutes: number) => {
+  const total = Math.max(0, Math.round(minutes))
+  const hours = Math.floor(total / 60)
+  const rest = total % 60
+
+  if (hours === 0) return `${rest} min`
+  if (rest === 0) return `${hours} hr`
+
+  return `${hours} hr ${rest} min`
+}
+
 export const titleCase = (value: string) =>
   value
     .replace(/[-_]/g, ' ')

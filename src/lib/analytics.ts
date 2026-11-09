@@ -25,6 +25,161 @@ export const MANUAL_EXERCISE_METADATA: Record<string, {
   // },
 }
 
+export type MuscleHierarchyKey =
+  | 'chest'
+  | 'back'
+  | 'shoulders'
+  | 'biceps'
+  | 'triceps'
+  | 'forearms'
+  | 'core'
+  | 'glutes'
+  | 'quadriceps'
+  | 'hamstrings'
+  | 'calves'
+  | 'adductors'
+  | 'hip flexors'
+  | 'neck'
+
+export interface MuscleHierarchySubgroup {
+  key: string
+  label: string
+}
+
+export interface MuscleHierarchyGroup {
+  key: MuscleHierarchyKey
+  label: string
+  aggregateKey: string
+  subgroups: MuscleHierarchySubgroup[]
+}
+
+export const MUSCLE_HIERARCHY: MuscleHierarchyGroup[] = [
+  {
+    key: 'chest',
+    label: 'Chest',
+    aggregateKey: 'chest',
+    subgroups: [
+      { key: 'upper pecs', label: 'Upper Pecs' },
+      { key: 'mid pecs', label: 'Mid pecs' },
+      { key: 'lower pecs', label: 'Lower Pecs' },
+    ],
+  },
+  {
+    key: 'back',
+    label: 'Back',
+    aggregateKey: 'back',
+    subgroups: [
+      { key: 'trapezius', label: 'Trapezius' },
+      { key: 'latissimus dorsi', label: 'Latissimus dorsi' },
+      { key: 'levator scapulae', label: 'Levator scapulae' },
+      { key: 'rhomboids', label: 'Rhomboids (major & minor)' },
+      { key: 'erector spinae', label: 'Erector spinae' },
+    ],
+  },
+  {
+    key: 'shoulders',
+    label: 'Shoulders',
+    aggregateKey: 'shoulders',
+    subgroups: [
+      { key: 'anterior deltoids', label: 'Anterior deltoids' },
+      { key: 'lateral deltoids', label: 'Lateral deltoids' },
+      { key: 'posterior deltoids', label: 'Posterior deltoids' },
+    ],
+  },
+  {
+    key: 'biceps',
+    label: 'Biceps',
+    aggregateKey: 'biceps',
+    subgroups: [
+      { key: 'biceps brachii', label: 'Biceps brachii' },
+    ],
+  },
+  {
+    key: 'triceps',
+    label: 'Triceps',
+    aggregateKey: 'triceps',
+    subgroups: [
+      { key: 'long head', label: 'Long head' },
+      { key: 'lateral head', label: 'Lateral head' },
+      { key: 'medial head', label: 'Medial head' },
+    ],
+  },
+  {
+    key: 'forearms',
+    label: 'Forearms',
+    aggregateKey: 'forearms',
+    subgroups: [
+      { key: 'wrist flexors', label: 'Wrist flexors' },
+      { key: 'wrist extensors', label: 'Wrist extensors' },
+      { key: 'brachialis', label: 'Brachialis' },
+      { key: 'brachioradialis', label: 'Brachioradialis' },
+    ],
+  },
+  {
+    key: 'core',
+    label: 'Core',
+    aggregateKey: 'core',
+    subgroups: [
+      { key: 'rectus abdominis', label: 'Rectus abdominis' },
+      { key: 'obliques', label: 'Obliques' },
+      { key: 'transverse abdominis', label: 'Transverse abdominis' },
+    ],
+  },
+  {
+    key: 'glutes',
+    label: 'Glutes',
+    aggregateKey: 'glutes',
+    subgroups: [],
+  },
+  {
+    key: 'quadriceps',
+    label: 'Quadriceps',
+    aggregateKey: 'quadriceps',
+    subgroups: [],
+  },
+  {
+    key: 'hamstrings',
+    label: 'Hamstrings',
+    aggregateKey: 'hamstrings',
+    subgroups: [],
+  },
+  {
+    key: 'calves',
+    label: 'Calves',
+    aggregateKey: 'calves',
+    subgroups: [],
+  },
+  {
+    key: 'adductors',
+    label: 'Adductors',
+    aggregateKey: 'adductors',
+    subgroups: [
+      { key: 'adductor magnus', label: 'Adductor magnus' },
+      { key: 'adductor longus', label: 'Longus' },
+      { key: 'adductor brevis', label: 'Brevis' },
+      { key: 'gracilis', label: 'Gracilis' },
+    ],
+  },
+  {
+    key: 'hip flexors',
+    label: 'Hip flexors',
+    aggregateKey: 'hip flexors',
+    subgroups: [
+      { key: 'iliopsoas', label: 'Iliopsoas' },
+      { key: 'rectus femoris', label: 'Rectus femoris' },
+    ],
+  },
+  {
+    key: 'neck',
+    label: 'Neck',
+    aggregateKey: 'neck',
+    subgroups: [
+      { key: 'neck flexors', label: 'Neck flexors' },
+      { key: 'neck extensors', label: 'Neck extensors' },
+    ],
+  },
+]
+
 const normalizeGroup = (value: string) => value.trim().toLowerCase()
 
 function normalizeGroups(values: string[] | undefined): string[] {
@@ -267,6 +422,323 @@ export function getMuscleAnalytics(
     .sort((a, b) => b.volume - a.volume)
 }
 
+export interface HierarchicalExerciseEntry {
+  exerciseId: string
+  exerciseName: string
+  sets: number
+  reps: number
+  volume: number
+  averageWeight: number
+  maxWeight: number
+}
+
+export interface HierarchicalMuscleAnalytics {
+  muscleKey: MuscleHierarchyKey
+  label: string
+  aggregateAverageWeight: number | null
+  volume: number
+  sets: number
+  reps: number
+  totalExercises: number
+  topExercises: HierarchicalExerciseEntry[]
+}
+
+interface ResolvedMuscleKey {
+  parent: MuscleHierarchyKey
+  subgroupKey: string | null
+}
+
+const EXDB_SUBGROUP_SYNONYMS: Record<
+  string,
+  { parent: MuscleHierarchyKey; subgroup: string }
+> = {
+  // Synonyms used by the EXDB catalogue (tg/mg/sm strings) that
+  // correspond exactly to a named subgroup.
+  'lats': { parent: 'back', subgroup: 'latissimus dorsi' },
+  'traps': { parent: 'back', subgroup: 'trapezius' },
+  'lower back': { parent: 'back', subgroup: 'erector spinae' },
+}
+
+/*
+ * Catching logic: normalizeWorkouts never invents subgroup strings, but the
+ * data sources use several spellings for the same muscle ("pectorals",
+ * "pecs", "chest", "delts", "deltoids", ...). Substring probes below catch
+ * those variants and route them to the correct parent/subgroup.
+ */
+function resolveMuscleKeyForGroup(
+  normalizedGroup: string,
+): ResolvedMuscleKey | null {
+  const g = normalizedGroup
+
+  // Chest: catches "pectorals", "pectoralis", "pecs", "chest", ...
+  if (g.includes('pec') || g.includes('chest')) {
+    if (g.includes('upper')) return { parent: 'chest', subgroupKey: 'upper pecs' }
+    if (g.includes('lower')) return { parent: 'chest', subgroupKey: 'lower pecs' }
+    if (g.includes('mid') || g.includes('middle')) {
+      return { parent: 'chest', subgroupKey: 'mid pecs' }
+    }
+    return { parent: 'chest', subgroupKey: null }
+  }
+
+  // Shoulders: catches "delts", "deltoids", "deltoid", ...
+  if (g.includes('delt')) {
+    if (g.includes('anterior') || g.includes('front')) {
+      return { parent: 'shoulders', subgroupKey: 'anterior deltoids' }
+    }
+    if (g.includes('lateral') || g.includes('side')) {
+      return { parent: 'shoulders', subgroupKey: 'lateral deltoids' }
+    }
+    if (g.includes('posterior') || g.includes('rear')) {
+      return { parent: 'shoulders', subgroupKey: 'posterior deltoids' }
+    }
+    return { parent: 'shoulders', subgroupKey: null }
+  }
+  if (g.includes('shoulder')) {
+    return { parent: 'shoulders', subgroupKey: null }
+  }
+
+  // Synonyms explicitly requested
+  if (g === 'glutes' || g === 'gluteal') {
+    return { parent: 'glutes', subgroupKey: null }
+  }
+  if (g === 'quadriceps' || g === 'quads') {
+    return { parent: 'quadriceps', subgroupKey: null }
+  }
+  if (g === 'hamstrings' || g === 'hamstring') {
+    return { parent: 'hamstrings', subgroupKey: null }
+  }
+  // "biceps" (EXDB tg) treated as biceps brachii, the only biceps subgroup
+  if (g === 'biceps') {
+    return { parent: 'biceps', subgroupKey: 'biceps brachii' }
+  }
+  // "abs" (EXDB tg) feeds the core parent aggregate per request
+  if (g === 'abs' || g === 'abdominals') {
+    return { parent: 'core', subgroupKey: null }
+  }
+
+  const synonym = EXDB_SUBGROUP_SYNONYMS[g]
+  if (synonym) {
+    return { parent: synonym.parent, subgroupKey: synonym.subgroup }
+  }
+
+  for (const group of MUSCLE_HIERARCHY) {
+    for (const subgroup of group.subgroups) {
+      if (subgroup.key === g) {
+        return { parent: group.key, subgroupKey: subgroup.key }
+      }
+    }
+    if (group.aggregateKey === g || group.key === g) {
+      return { parent: group.key, subgroupKey: null }
+    }
+  }
+  return null
+}
+
+export function getHierarchicalMuscleAnalytics(
+  sets: NormalizedSet[],
+): HierarchicalMuscleAnalytics[] {
+  /*
+   * Per (parent, exercise): max weight plus the set of resolution marks
+   * ("direct" or a subgroup key) it hit. The aggregate average counts an
+   * exercise once per mark, so an exercise hitting multiple subgroups of
+   * the same parent contributes multiple times.
+   */
+  const parentExerciseTrack = new Map<
+    MuscleHierarchyKey,
+    Map<string, {
+      max: number
+      name: string
+      marks: Set<string>
+      sets: number
+      reps: number
+      volume: number
+      weightSum: number
+    }>
+  >()
+  const parentVolume = new Map<MuscleHierarchyKey, number>()
+  const parentSets = new Map<MuscleHierarchyKey, number>()
+  const parentReps = new Map<MuscleHierarchyKey, number>()
+
+  for (const set of sets) {
+    if (!Number.isFinite(set.weight)) continue
+    const volume = set.weight * set.reps
+
+    // Guard so a set resolved to the same parent through several of its
+    // group strings (e.g. 'chest' and 'upper pecs') only counts once.
+    const resolvedParentsThisSet = new Set<MuscleHierarchyKey>()
+
+    for (const group of set.muscleGroups) {
+      const resolved = resolveMuscleKeyForGroup(normalizeGroup(group))
+      if (!resolved) continue
+
+      const parent = resolved.parent
+
+      if (!parentExerciseTrack.has(parent)) {
+        parentExerciseTrack.set(parent, new Map())
+      }
+      const exercises = parentExerciseTrack.get(parent)!
+
+      const tracked = exercises.get(set.exerciseId) ?? {
+        max: -Infinity,
+        name: set.exerciseName,
+        marks: new Set<string>(),
+        sets: 0,
+        reps: 0,
+        volume: 0,
+        weightSum: 0,
+      }
+      const mark = resolved.subgroupKey ?? '__direct__'
+      tracked.marks.add(mark)
+      tracked.name = set.exerciseName
+      if (set.weight > tracked.max) tracked.max = set.weight
+      exercises.set(set.exerciseId, tracked)
+
+      if (!resolvedParentsThisSet.has(parent)) {
+        resolvedParentsThisSet.add(parent)
+        parentVolume.set(parent, (parentVolume.get(parent) ?? 0) + volume)
+        parentSets.set(parent, (parentSets.get(parent) ?? 0) + 1)
+        parentReps.set(parent, (parentReps.get(parent) ?? 0) + set.reps)
+
+        // Per-exercise workload stats are counted once per set per parent.
+        tracked.sets += 1
+        tracked.reps += set.reps
+        tracked.volume += volume
+        tracked.weightSum += set.weight
+        exercises.set(set.exerciseId, tracked)
+      }
+    }
+  }
+
+  return MUSCLE_HIERARCHY.map((hierarchy) => {
+    const exercisesForParent = parentExerciseTrack.get(hierarchy.key) ?? new Map()
+
+    const parentValues: number[] = []
+    for (const tracked of exercisesForParent.values()) {
+      if (!Number.isFinite(tracked.max)) continue
+      for (let i = 0; i < tracked.marks.size; i++) {
+        parentValues.push(tracked.max)
+      }
+    }
+
+    let aggregateAverageWeight: number | null = null
+    if (parentValues.length > 0) {
+      aggregateAverageWeight =
+        parentValues.reduce((sum, v) => sum + v, 0) / parentValues.length
+    }
+
+    const topExercises = [...exercisesForParent.entries()]
+      .filter(([, tracked]) => Number.isFinite(tracked.max) && tracked.sets > 0)
+      .sort(([, a], [, b]) => b.max - a.max || a.name.localeCompare(b.name))
+      .slice(0, 7)
+      .map(([exerciseId, tracked]) => ({
+        exerciseId,
+        exerciseName: tracked.name,
+        sets: tracked.sets,
+        reps: tracked.reps,
+        volume: tracked.volume,
+        averageWeight: tracked.sets
+          ? tracked.weightSum / tracked.sets
+          : 0,
+        maxWeight: tracked.max,
+      }))
+
+    return {
+      muscleKey: hierarchy.key,
+      label: hierarchy.label,
+      aggregateAverageWeight,
+      volume: parentVolume.get(hierarchy.key) ?? 0,
+      sets: parentSets.get(hierarchy.key) ?? 0,
+      reps: parentReps.get(hierarchy.key) ?? 0,
+      totalExercises: exercisesForParent.size,
+      topExercises,
+    }
+  })
+}
+
+export interface WorkoutSession {
+  workoutId: string
+  workoutDate: string
+  workoutName: string
+  durationMinutes: number
+}
+
+export function getWorkoutSessions(
+  data: OpenGymBackup,
+): WorkoutSession[] {
+  const sessions: WorkoutSession[] = []
+
+  for (const workout of data.workouts ?? []) {
+    const start = Number(workout.start)
+    const end = Number(workout.end)
+
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+      continue
+    }
+
+    sessions.push({
+      workoutId: workout.id,
+      workoutDate: workout.d,
+      workoutName: workout.name,
+      durationMinutes: (end - start) / 60000,
+    })
+  }
+
+  return sessions
+}
+
+export function filterSessionsByDate(
+  sessions: WorkoutSession[],
+  startDate?: string,
+  endDate?: string,
+) {
+  return sessions.filter(
+    (session) =>
+      (!startDate || session.workoutDate >= startDate) &&
+      (!endDate || session.workoutDate <= endDate),
+  )
+}
+
+export interface SessionTimelinePoint {
+  date: string
+  totalMinutes: number
+  sessionNames: string[]
+}
+
+export function getSessionTimeline(
+  sessions: WorkoutSession[],
+): SessionTimelinePoint[] {
+  const days = new Map<
+    string,
+    { totalMinutes: number; sessionNames: string[] }
+  >()
+
+  for (const session of sessions) {
+    if (!session.workoutDate) continue
+
+    const day =
+      days.get(session.workoutDate) ?? {
+        totalMinutes: 0,
+        sessionNames: [],
+      }
+
+    day.totalMinutes += session.durationMinutes
+
+    if (!day.sessionNames.includes(session.workoutName)) {
+      day.sessionNames.push(session.workoutName)
+    }
+
+    days.set(session.workoutDate, day)
+  }
+
+  return [...days.entries()]
+    .map(([date, { totalMinutes, sessionNames }]) => ({
+      date,
+      totalMinutes,
+      sessionNames,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
 export function getExerciseAnalytics(
   sets: NormalizedSet[],
   selectedMuscle?: string,
@@ -313,25 +785,253 @@ export function getExerciseAnalytics(
 export function getTimeline(
   sets: NormalizedSet[],
 ): TimelinePoint[] {
-  const days = new Map<string, NormalizedSet[]>()
+  const days = new Map<
+    string,
+    { volume: number; sets: number; reps: number; names: Set<string> }
+  >()
 
   for (const set of sets) {
-    const list = days.get(set.workoutDate) ?? []
-    list.push(set)
-    days.set(set.workoutDate, list)
+    const day =
+      days.get(set.workoutDate) ?? {
+        volume: 0,
+        sets: 0,
+        reps: 0,
+        names: new Set<string>(),
+      }
+
+    day.volume += set.weight * set.reps
+    day.sets += 1
+    day.reps += set.reps
+
+    if (set.workoutName) {
+      day.names.add(set.workoutName)
+    }
+
+    days.set(set.workoutDate, day)
   }
 
   return [...days.entries()]
-    .map(([date, daySets]) => ({
-      date,
-      volume: daySets.reduce(
-        (sum, set) => sum + set.weight * set.reps,
-        0,
-      ),
-      sets: daySets.length,
-      reps: daySets.reduce((sum, set) => sum + set.reps, 0),
-    }))
+    .map(
+      ([
+        date,
+        { volume, sets, reps, names },
+      ]) => ({
+        date,
+        volume,
+        sets,
+        reps,
+        workoutNames: [...names],
+      }),
+    )
     .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+/*
+ * Routine-name grouping collapses the variations in which the same
+ * routine family has been recorded over time ("Push Day 1
+ * (chest-focused)", "Push Day 2 (Shoulder focused)", plain "Push",
+ * "Day 1: Chest And Triceps", "Back and Biceps", ...) into one dynamic
+ * key. It is applied at analytics time so newly created or renamed
+ * routines are picked up without any configuration.
+ *
+ * Names are mapped by their muscle keywords rather than exact spelling:
+ * a leading push/pull/upper-group keyword pins the family first, then
+ * the first keyword family found in the name wins. Names without any
+ * recognized family keyword (one-off labels such as "Midnight Workout",
+ * "Evening Workout" or "Full Body Calisthenics" names) return '' and
+ * are excluded from the per-routine charts.
+ */
+/*
+ * Order matters: the first family whose keywords appear in a normalized
+ * workout name claims it. Pull is checked before Legs so compound names
+ * such as "Back and Biceps + Some Legs And Core" aggregate under Pull.
+ */
+const ROUTINE_FAMILIES: Array<[string, string[]]> = [
+  ['push', ['push', 'chest', 'pec', 'triceps', 'shoulder', 'delt']],
+  ['pull', ['pull', 'back', 'lats', 'biceps', 'rhomboid', 'trap']],
+  ['legs', ['leg', 'quad', 'hamstring', 'glute', 'calf', 'calves', 'thigh']],
+]
+
+export function normalizeRoutineGroup(workoutName: string): string {
+  let name = workoutName.toLowerCase()
+
+  // Normalize the textual variations used between recorded sessions
+  name = name.replace(/&/g, ' and ')
+  name = name.replace(/\s*\([^)]*\)|\s*\[[^\]]*\]/g, ' ')
+  name = name.replace(/\+.*/, ' ')
+
+  // "Day 1" / "Day 2" / ordinal numbering is not part of the group identity
+  name = name.replace(/^day\s*\d*\s*:?\s*/, ' ')
+  name = name.replace(/\bday\b/g, ' ')
+  name = name.replace(/\bcopy\b/g, ' ')
+  name = name.replace(/\d+/g, ' ')
+  name = name.replace(/[^a-z ]/g, ' ')
+  name = name.replace(/\s+/g, ' ').trim()
+
+  if (!name) {
+    return ''
+  }
+
+  // A leading routine keyword is the strongest signal
+  const leading = name.match(/^(push|pull|legs?)\b/)
+
+  if (leading) {
+    return leading[1] === 'leg' ? 'legs' : leading[1]
+  }
+
+  for (const [family, keywords] of ROUTINE_FAMILIES) {
+    if (keywords.some((keyword) => name.includes(keyword))) {
+      return family
+    }
+  }
+
+  return ''
+}
+
+export interface RoutineGroupStackPoint {
+  date: string
+  volume: number
+  sessionMinutes: number
+  workoutNames: string[]
+}
+
+/*
+ * Merge a volume-per-date timeline with a session-length-per-date
+ * timeline into one series so both can be drawn in the same chart,
+ * independently of which routine group the data belongs to.
+ */
+export function buildStackedTimeline(
+  volumeTimeline: TimelinePoint[],
+  sessionTimeline: SessionTimelinePoint[],
+): RoutineGroupStackPoint[] {
+  const byDate = new Map<string, RoutineGroupStackPoint>()
+
+  for (const point of volumeTimeline) {
+    byDate.set(point.date, {
+      date: point.date,
+      volume: point.volume,
+      sessionMinutes: 0,
+      workoutNames: point.workoutNames,
+    })
+  }
+
+  for (const point of sessionTimeline) {
+    const existing = byDate.get(point.date)
+
+    if (existing) {
+      existing.sessionMinutes = point.totalMinutes
+    } else {
+      byDate.set(point.date, {
+        date: point.date,
+        volume: 0,
+        sessionMinutes: point.totalMinutes,
+        workoutNames: [],
+      })
+    }
+  }
+
+  return [...byDate.values()].sort((a, b) =>
+    a.date.localeCompare(b.date),
+  )
+}
+
+export interface RoutineGroupTimeline {
+  groupKey: string
+  sessions: number
+  totalVolume: number
+  workoutNames: string[]
+  stackedTimeline: RoutineGroupStackPoint[]
+}
+
+export function getRoutineGroupTimelines(
+  baseSets: NormalizedSet[],
+  filteredSets: NormalizedSet[],
+  sessions: WorkoutSession[] = [],
+  startDate?: string,
+  endDate?: string,
+): RoutineGroupTimeline[] {
+  /*
+   * Eligibility is determined on the full data set so a period filter
+   * cannot temporarily hide an otherwise recurring routine. A group is
+   * considered to be recurring when at least two distinct workout
+   * sessions used it; one-off session names are excluded.
+   */
+  const baseSessions = new Map<string, Set<string>>()
+  const baseNames = new Map<string, Map<string, number>>()
+
+  for (const set of baseSets) {
+    const key = normalizeRoutineGroup(set.workoutName)
+
+    if (!key) continue
+
+    const sessions = baseSessions.get(key) ?? new Set()
+
+    sessions.add(set.workoutId)
+    baseSessions.set(key, sessions)
+
+    const names = baseNames.get(key) ?? new Map()
+
+    names.set(set.workoutName, (names.get(set.workoutName) ?? 0) + 1)
+    baseNames.set(key, names)
+  }
+
+  const recurringKeys = new Set(
+    [...baseSessions.entries()]
+      .filter(([, sessions]) => sessions.size >= 2)
+      .map(([key]) => key),
+  )
+
+  const filteredGroups = new Map<string, NormalizedSet[]>()
+
+  for (const set of filteredSets) {
+    const key = normalizeRoutineGroup(set.workoutName)
+
+    if (!key || !recurringKeys.has(key)) continue
+
+    const sets = filteredGroups.get(key) ?? []
+
+    sets.push(set)
+    filteredGroups.set(key, sets)
+  }
+
+  return [...filteredGroups.entries()]
+    .map(([groupKey, groupSets]) => {
+      const sessionCount = new Set(
+        groupSets.map((set) => set.workoutId),
+      ).size
+
+      /*
+       * Session durations only exist per whole workout, so the session
+       * length series aggregates every recorded session whose routine
+       * name belongs to this group, with the same date filter applied.
+       * Volume and session length are merged per date into one series so
+       * they can be rendered in the same chart.
+       */
+      const groupSessions = sessions.filter(
+        (session) =>
+          Boolean(session.workoutName) &&
+          normalizeRoutineGroup(session.workoutName) === groupKey,
+      )
+
+      return {
+        groupKey,
+        sessions: sessionCount,
+        totalVolume: groupSets.reduce(
+          (sum, set) => sum + set.weight * set.reps,
+          0,
+        ),
+        workoutNames: [...(baseNames.get(groupKey) ?? new Map())]
+          .sort(([, a], [, b]) => b - a)
+          .map(([name]) => name),
+        stackedTimeline: buildStackedTimeline(
+          getTimeline(groupSets),
+          getSessionTimeline(
+            filterSessionsByDate(groupSessions, startDate, endDate),
+          ),
+        ),
+      }
+    })
+    .sort((a, b) => b.totalVolume - a.totalVolume)
 }
 
 export function getClassificationStats(sets: NormalizedSet[]) {

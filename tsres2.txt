@@ -1,0 +1,4 @@
+npm warn exec The following package was not found and will be installed: tsx@4.23.15
+'\\sshfs\zencharus@100.125.149.93\Documents\github_projects\opengym-analytics\chat\opengym-analytics'
+CMD.EXE was started with the above path as the current directory.
+UNC paths are not supported.  Defaulting to Windows directory.

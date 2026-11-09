@@ -1227,6 +1227,14 @@ input:-webkit-autofill {
 }
 
 /* Card headings (chart cards, Reeves table, formula card) */
+.card-heading {
+  display: flex;
+
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
 .card-heading h2,
 .formula-card h2 {
   margin: 0 0 4px;
@@ -1243,6 +1251,10 @@ input:-webkit-autofill {
   color: #a1a1a6;
 
   font-size: 12px;
+}
+
+.card-heading .card-action {
+  flex-shrink: 0;
 }
 
 .app-shell > *:not(nav) {

@@ -1,10 +1,12 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from 'react'
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -33,11 +35,16 @@ import {
 import backup from './data/opengym-backup.json'
 
 import {
+  buildStackedTimeline,
   filterByDate,
+  filterSessionsByDate,
   getClassificationStats,
-  getExerciseAnalytics,
+  getHierarchicalMuscleAnalytics,
   getMuscleAnalytics,
+  getRoutineGroupTimelines,
+  getSessionTimeline,
   getTimeline,
+  getWorkoutSessions,
   normalizeWorkouts,
 } from './lib/analytics'
 
@@ -55,6 +62,7 @@ import {
 } from './lib/api'
 
 import {
+  formatDuration,
   formatNumber,
   formatVolume,
   formatWeight,
@@ -71,6 +79,12 @@ import type {
   OpenGymBackup,
 } from './types/opengym'
 
+import type {
+  SessionTimelinePoint,
+  RoutineGroupTimeline,
+  RoutineGroupStackPoint,
+} from './lib/analytics'
+
 const FALLBACK_DATA = backup as OpenGymBackup
 
 const PERIODS = [
@@ -81,8 +95,16 @@ const PERIODS = [
   { label: 'Last year', days: 365 },
 ]
 
+const SESSION_PERIODS = [
+  { label: 'Last Week', days: 7 },
+  { label: 'Last Month', days: 30 },
+  { label: 'Last Three Months', days: 90 },
+  { label: 'All time', days: null },
+]
+
 const CHART_GREEN = '#30d158'
 const CHART_GREEN_LIGHT = '#7ee79a'
+const CHART_BLUE = '#0a84ff'
 const CHART_TEXT = '#f5f5f7'
 const CHART_GRID = '#3a3a3c'
 const CHART_AXIS = '#8e8e93'
@@ -184,9 +206,26 @@ function App() {
   const [catalogLoading, setCatalogLoading] = useState(true)
 
   const [period, setPeriod] = useState('All time')
+  const [sessionPeriod, setSessionPeriod] = useState('Last Month')
   const [muscle, setMuscle] = useState('all')
   const [exercise, setExercise] = useState('all')
   const [includeWarmups, setIncludeWarmups] = useState(false)
+
+  /*
+   * Whether the blue session-length overlay (and its secondary axis) is
+   * visible per chart. Keys are chart identifiers: 'master' for the main
+   * Volume over time chart and the routine-group key for the PPL charts.
+   */
+  const [sessionOverlays, setSessionOverlays] = useState<
+    Record<string, boolean>
+  >({})
+
+  function toggleSessionOverlay(chartKey: string) {
+    setSessionOverlays((current) => ({
+      ...current,
+      [chartKey]: !current[chartKey],
+    }))
+  }
 
   const [bodyStore, setBodyStore] = useState<BodyMeasurementStore>({
     measurements: [],
@@ -527,69 +566,7 @@ function App() {
 
   const muscles = useMemo(() => {
     try {
-      const baseMuscles = getMuscleAnalytics(periodSets)
-
-      /*
-       * Find the maximum working weight for each exercise in each muscle
-       * group. Each exercise contributes once to every associated group,
-       * regardless of its number of sets.
-       */
-      const maxWeightByExerciseAndMuscle = new Map<
-        string,
-        Map<string, number>
-      >()
-
-      for (const set of periodSets) {
-        if (!Number.isFinite(set.weight)) continue
-
-        for (const muscleGroup of set.muscleGroups) {
-          if (!maxWeightByExerciseAndMuscle.has(muscleGroup)) {
-            maxWeightByExerciseAndMuscle.set(
-              muscleGroup,
-              new Map(),
-            )
-          }
-
-          const exercisesForMuscle =
-            maxWeightByExerciseAndMuscle.get(muscleGroup)!
-
-          const currentMax = exercisesForMuscle.get(set.exerciseId)
-
-          if (currentMax === undefined || set.weight > currentMax) {
-            exercisesForMuscle.set(set.exerciseId, set.weight)
-          }
-        }
-      }
-
-      /*
-       * Average the exercise-level maximum weights, giving each exercise
-       * equal weight within its muscle group.
-       */
-      const averageMaxWeightByMuscle = new Map<string, number>()
-
-      for (
-        const [muscleGroup, exercisesForMuscle]
-        of maxWeightByExerciseAndMuscle
-      ) {
-        const exerciseMaxWeights = [...exercisesForMuscle.values()]
-          .filter((weight) => Number.isFinite(weight))
-
-        if (exerciseMaxWeights.length > 0) {
-          averageMaxWeightByMuscle.set(
-            muscleGroup,
-            exerciseMaxWeights.reduce(
-              (sum, weight) => sum + weight,
-              0,
-            ) / exerciseMaxWeights.length,
-          )
-        }
-      }
-
-      return baseMuscles.map((item) => ({
-        ...item,
-        averageWeight:
-          averageMaxWeightByMuscle.get(item.muscleGroup) ?? 0,
-      }))
+      return getMuscleAnalytics(periodSets)
     } catch (error) {
       console.error('Unable to calculate muscle analytics:', error)
 
@@ -598,19 +575,6 @@ function App() {
   }, [periodSets])
 
   const muscleOptions = muscles.map((item) => item.muscleGroup)
-
-  const exercises = useMemo(() => {
-    try {
-      return getExerciseAnalytics(
-        periodSets,
-        muscle === 'all' ? undefined : muscle,
-      )
-    } catch (error) {
-      console.error('Unable to calculate exercise analytics:', error)
-
-      return []
-    }
-  }, [periodSets, muscle])
 
   const exerciseOptions = useMemo(() => {
     const source =
@@ -644,8 +608,8 @@ function App() {
     }
   }, [selectedExerciseSets])
 
-  const selectedExercise = exercises.find(
-    (item) => item.exerciseId === exercise,
+  const selectedExercise = exerciseOptions.find(
+    (item) => item.id === exercise,
   )
 
   const classification = useMemo(() => {
@@ -675,6 +639,106 @@ function App() {
   ).size
 
   const unclassified = classification.unclassified ?? 0
+
+  const hierarchicalMuscles = useMemo(() => {
+    try {
+      return getHierarchicalMuscleAnalytics(periodSets)
+    } catch (error) {
+      console.error('Unable to calculate hierarchical muscle analytics:', error)
+
+      return []
+    }
+  }, [periodSets])
+
+  const sessions = useMemo(() => {
+    try {
+      return getWorkoutSessions(data)
+    } catch (error) {
+      console.error('Unable to extract workout sessions:', error)
+
+      return []
+    }
+  }, [data])
+
+  const sessionTimeline = useMemo(() => {
+    try {
+      const filtered = filterSessionsByDate(
+        sessions,
+        startDateString,
+        latestDate,
+      )
+
+      return getSessionTimeline(filtered)
+    } catch (error) {
+      console.error('Unable to build session timeline:', error)
+
+      return []
+    }
+  }, [sessions, startDateString, latestDate])
+
+  const masterStackedTimeline = useMemo(() => {
+    try {
+      return buildStackedTimeline(timeline, sessionTimeline)
+    } catch (error) {
+      console.error('Unable to merge session durations into timeline:', error)
+
+      return []
+    }
+  }, [timeline, sessionTimeline])
+
+  const routineGroups = useMemo(() => {
+    try {
+      return getRoutineGroupTimelines(
+        normalized,
+        selectedExerciseSets,
+        sessions,
+        startDateString,
+        latestDate,
+      )
+    } catch (error) {
+      console.error('Unable to build routine-group timelines:', error)
+
+      return [] as RoutineGroupTimeline[]
+    }
+  }, [normalized, selectedExerciseSets, sessions, startDateString, latestDate])
+
+  const selectedSessionPeriod =
+    SESSION_PERIODS.find(
+      (periodOption) => periodOption.label === sessionPeriod,
+    ) ?? SESSION_PERIODS[SESSION_PERIODS.length - 1]
+
+  const sessionPeriodStart =
+    selectedSessionPeriod.days == null
+      ? undefined
+      : new Date(`${latestDate}T12:00:00`).getTime() -
+        selectedSessionPeriod.days * 86400000
+
+  const sessionPeriodStartString =
+    sessionPeriodStart == null
+      ? undefined
+      : new Date(sessionPeriodStart).toISOString().slice(0, 10)
+
+  const sessionSummary = useMemo(() => {
+    const filtered = filterSessionsByDate(
+      sessions,
+      sessionPeriodStartString,
+      latestDate,
+    )
+
+    if (filtered.length === 0) {
+      return { count: 0, averageMinutes: null }
+    }
+
+    const totalMinutes = filtered.reduce(
+      (sum, session) => sum + session.durationMinutes,
+      0,
+    )
+
+    return {
+      count: filtered.length,
+      averageMinutes: totalMinutes / filtered.length,
+    }
+  }, [sessions, sessionPeriodStartString, latestDate])
 
   const latestBody =
     bodyDraft ?? getLatestMeasurement(bodyStore.measurements)
@@ -975,27 +1039,124 @@ function App() {
               detail={`${workoutCount} workouts`}
             />
 
-            {[...muscles]
-              .filter((item) => Number.isFinite(item.averageWeight))
-              .sort((a, b) => b.averageWeight - a.averageWeight)
-              .map((item) => (
-                <Metric
-                  key={item.muscleGroup}
-                  title={`${titleCase(item.muscleGroup)} average max weight`}
-                  value={formatWeight(item.averageWeight)}
-                  detail="Mean of exercise maximums"
-                />
-              ))}
+            <Card.Root>
+              <Card.Body>
+                <Stat.Root>
+                  <Stat.Label>Average Workout session length</Stat.Label>
+                  <Stat.ValueText>
+                    {sessionSummary.averageMinutes == null
+                      ? '-'
+                      : formatDuration(sessionSummary.averageMinutes)}
+                  </Stat.ValueText>
+                  <Stat.HelpText>
+                    {sessionSummary.count === 0
+                      ? 'no sessions'
+                      : `${formatNumber(sessionSummary.count)} session${
+                          sessionSummary.count === 1 ? '' : 's'
+                        }`}
+                  </Stat.HelpText>
+                </Stat.Root>
+
+                <NativeSelect.Root size="sm" mt="2" w="full">
+                  <NativeSelect.Field
+                    value={sessionPeriod}
+                    onChange={(e) => setSessionPeriod(e.target.value)}
+                  >
+                    {SESSION_PERIODS.map((periodOption) => (
+                      <option key={periodOption.label}>
+                        {periodOption.label}
+                      </option>
+                    ))}
+                  </NativeSelect.Field>
+
+                  <NativeSelect.Indicator />
+                </NativeSelect.Root>
+              </Card.Body>
+            </Card.Root>
           </SimpleGrid>
+
+          <Box mb="6">
+            <Box
+              borderTop="1px solid"
+              borderColor="border"
+              my="4"
+            />
+            <Heading size="md" mb="3">
+              Average max weight by muscle group
+            </Heading>
+            <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} gap="4">
+              {hierarchicalMuscles.map((group) => (
+                <Card.Root key={group.muscleKey}>
+                  <Card.Body>
+                    <Box mb="2">
+                      <Text fontWeight="semibold" textTransform="capitalize">
+                        {group.label}
+                      </Text>
+                      <Text fontSize="sm" color="fg.muted">
+                        Aggregated average max weight across all muscle subgroups
+                      </Text>
+                      <Text fontSize="lg" fontWeight="semibold" mt="1">
+                        {group.aggregateAverageWeight == null
+                          ? '-'
+                          : formatWeight(group.aggregateAverageWeight)}
+                      </Text>
+                    </Box>
+                    {group.topExercises.length === 0 ? (
+                      <Text fontSize="sm" color="fg.muted">-</Text>
+                    ) : (
+                      <div className="table-wrap">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Exercise</th>
+                              <th>Sets</th>
+                              <th>Reps</th>
+                              <th>Volume</th>
+                              <th>Avg</th>
+                              <th>Max</th>
+                            </tr>
+                          </thead>
+
+                          <tbody>
+                            {group.topExercises.map((exercise) => (
+                              <tr key={exercise.exerciseId}>
+                                <td>
+                                  <strong>{exercise.exerciseName}</strong>
+                                </td>
+
+                                <td>{formatNumber(exercise.sets)}</td>
+                                <td>{formatNumber(exercise.reps)}</td>
+                                <td>{formatVolume(exercise.volume)}</td>
+                                <td>{formatWeight(exercise.averageWeight)}</td>
+                                <td>{formatWeight(exercise.maxWeight)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    <Text fontSize="sm" color="fg.muted" mt="2">
+                      {formatNumber(group.totalExercises)} distinct exercise
+                      {group.totalExercises === 1 ? '' : 's'} tried for{' '}
+                      {group.label.toLowerCase()}
+                    </Text>
+                  </Card.Body>
+                </Card.Root>
+              ))}
+            </SimpleGrid>
+          </Box>
 
           <section className="chart-grid">
             <ChartCard
               title="Volume by muscle group"
-              subtitle="Total performed volume in pounds"
+              subtitle="Total performed volume in pounds, aggregated by muscle group"
             >
               <ResponsiveContainer width="100%" height={360}>
                 <BarChart
-                  data={muscles.slice(0, 12)}
+                  data={[...hierarchicalMuscles]
+                    .sort((a, b) => b.volume - a.volume)
+                    .slice(0, 12)}
                   layout="vertical"
                   margin={{ left: 20, right: 24 }}
                 >
@@ -1015,7 +1176,7 @@ function App() {
 
                   <YAxis
                     type="category"
-                    dataKey="muscleGroup"
+                    dataKey="label"
                     width={95}
                     tickFormatter={titleCase}
                     {...AXIS_PROPS}
@@ -1038,12 +1199,15 @@ function App() {
 
             <ChartCard
               title="Average maximum working weight"
-              subtitle="Mean of exercise maximum weights by muscle group, highest to lowest"
+              subtitle="Aggregated mean of exercise maximum weights by muscle group, highest to lowest"
             >
               <ResponsiveContainer width="100%" height={360}>
                 <BarChart
-                  data={[...muscles]
-                    .sort((a, b) => b.averageWeight - a.averageWeight)
+                  data={[...hierarchicalMuscles]
+                    .filter((group) => group.aggregateAverageWeight != null)
+                    .sort((a, b) =>
+                      (b.aggregateAverageWeight ?? 0) -
+                      (a.aggregateAverageWeight ?? 0))
                     .slice(0, 12)}
                   margin={{ left: 4, right: 20 }}
                 >
@@ -1054,7 +1218,7 @@ function App() {
                   />
 
                   <XAxis
-                    dataKey="muscleGroup"
+                    dataKey="label"
                     tickFormatter={titleCase}
                     angle={-28}
                     textAnchor="end"
@@ -1075,7 +1239,7 @@ function App() {
                   />
 
                   <Bar
-                    dataKey="averageWeight"
+                    dataKey="aggregateAverageWeight"
                     fill={CHART_GREEN}
                     radius={[5, 5, 0, 0]}
                   />
@@ -1087,11 +1251,13 @@ function App() {
           <section className="chart-grid">
             <ChartCard
               title="Sets and reps by muscle group"
-              subtitle="Training workload distribution"
+              subtitle="Training workload distribution, aggregated by muscle group"
             >
               <ResponsiveContainer width="100%" height={360}>
                 <BarChart
-                  data={muscles.slice(0, 10)}
+                  data={[...hierarchicalMuscles]
+                    .sort((a, b) => b.volume - a.volume)
+                    .slice(0, 10)}
                   margin={{ left: 0, right: 20 }}
                 >
                   <CartesianGrid
@@ -1101,7 +1267,7 @@ function App() {
                   />
 
                   <XAxis
-                    dataKey="muscleGroup"
+                    dataKey="label"
                     tickFormatter={titleCase}
                     angle={-28}
                     textAnchor="end"
@@ -1140,14 +1306,26 @@ function App() {
             <ChartCard
               title={
                 exercise === 'all'
-                  ? 'Volume over time'
-                  : `${selectedExercise?.exerciseName ?? 'Exercise'} volume`
+                  ? sessionOverlays.master
+                    ? 'Volume and session length over time'
+                    : 'Volume over time'
+                  : `${
+                      sessionOverlays.master
+                    ? 'Volume and session length'
+                    : 'Volume'
+                  } for ${selectedExercise?.name ?? 'Exercise'}`
               }
               subtitle="Performed volume by workout date"
+              action={
+                <SessionLengthToggle
+                  shown={Boolean(sessionOverlays.master)}
+                  onToggle={() => toggleSessionOverlay('master')}
+                />
+              }
             >
               <ResponsiveContainer width="100%" height={360}>
-                <LineChart
-                  data={timeline}
+                <ComposedChart
+                  data={masterStackedTimeline}
                   margin={{ left: 0, right: 20 }}
                 >
                   <CartesianGrid
@@ -1163,95 +1341,185 @@ function App() {
                   />
 
                   <YAxis
+                    yAxisId="volume"
                     tickFormatter={(value) =>
                       `${Math.round(Number(value) / 1000)}k`
                     }
                     {...AXIS_PROPS}
                   />
 
-                  <Tooltip
-                    contentStyle={TOOLTIP_STYLE}
-                    formatter={(value) => formatVolume(Number(value))}
-                  />
+                  {sessionOverlays.master && (
+                    <YAxis
+                      yAxisId="minutes"
+                      orientation="right"
+                      tickFormatter={(value) =>
+                        `${Math.round(Number(value))} min`
+                      }
+                      {...AXIS_PROPS}
+                    />
+                  )}
+
+                  {sessionOverlays.master && (
+                    <Area
+                      dataKey="sessionMinutes"
+                      name="Session length (min)"
+                      yAxisId="minutes"
+                      type="monotone"
+                      stroke={CHART_BLUE}
+                      fill={CHART_BLUE}
+                      fillOpacity={0.35}
+                      strokeWidth={2}
+                    />
+                  )}
 
                   <Line
                     type="monotone"
                     dataKey="volume"
                     name="Volume"
+                    yAxisId="volume"
                     stroke={CHART_GREEN}
                     strokeWidth={2.5}
                     dot={false}
                   />
-                </LineChart>
+
+                  <Tooltip
+                    content={
+                      <StackedTooltip showSession={sessionOverlays.master} />
+                    }
+                  />
+                </ComposedChart>
               </ResponsiveContainer>
             </ChartCard>
           </section>
 
+          <Box mb="6">
+            <Heading size="md" mb="2">
+              Volume over time by routine
+            </Heading>
+
+            <Text fontSize="sm" color="fg.muted" mb="4">
+              One chart per recurring routine family, with a Show session
+              length button that toggles the blue recorded session time
+              (min, right axis) on top of the green volume (lb, left axis).
+              Recorded names are aggregated by their muscle keywords: Push
+              Day 1, Push Day 2 and Chest And Triceps all count as Push;
+              Pull Day 1, Pull Day 2 and Back And Biceps all count as Pull.
+              One-off session names such as Midnight Workout, Evening
+              Workout and Full Body Calisthenics are excluded.
+            </Text>
+
+            <section className="chart-grid">
+              {routineGroups.map((group) => {
+                const overlayKey = `routine-${group.groupKey}`
+                const showSession = Boolean(sessionOverlays[overlayKey])
+
+                return (
+                  <ChartCard
+                    key={group.groupKey}
+                    title={
+                      showSession
+                        ? `${titleCase(group.groupKey)} volume & session length`
+                        : `${titleCase(group.groupKey)} volume`
+                    }
+                    subtitle={`Aggregates: ${group.workoutNames.join(', ')}`}
+                    action={
+                      <SessionLengthToggle
+                        shown={showSession}
+                        onToggle={() => toggleSessionOverlay(overlayKey)}
+                      />
+                    }
+                  >
+                    <ResponsiveContainer width="100%" height={340}>
+                      <ComposedChart
+                        data={group.stackedTimeline}
+                        margin={{ left: 0, right: 20 }}
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke={CHART_GRID}
+                          vertical={false}
+                        />
+
+                        <XAxis
+                          dataKey="date"
+                          tickFormatter={(value) => String(value).slice(5)}
+                          {...AXIS_PROPS}
+                        />
+
+                        <YAxis
+                          yAxisId="volume"
+                          tickFormatter={(value) =>
+                            `${Math.round(Number(value) / 1000)}k`
+                          }
+                          {...AXIS_PROPS}
+                        />
+
+                        {showSession && (
+                          <YAxis
+                            yAxisId="minutes"
+                            orientation="right"
+                            tickFormatter={(value) =>
+                              `${Math.round(Number(value))} min`
+                            }
+                            {...AXIS_PROPS}
+                          />
+                        )}
+
+                        {showSession && (
+                          <Area
+                            dataKey="sessionMinutes"
+                            name="Session length (min)"
+                            yAxisId="minutes"
+                            type="monotone"
+                            stroke={CHART_BLUE}
+                            fill={CHART_BLUE}
+                            fillOpacity={0.35}
+                            strokeWidth={2}
+                          />
+                        )}
+
+                        <Line
+                          type="monotone"
+                          dataKey="volume"
+                          name="Volume"
+                          yAxisId="volume"
+                          stroke={CHART_GREEN}
+                          strokeWidth={2.5}
+                          dot={false}
+                        />
+
+                        <Tooltip
+                          content={
+                            <StackedTooltip showSession={showSession} />
+                          }
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+                )
+              })}
+            </section>
+          </Box>
+
           <section className="lower-grid">
             <ChartCard
-              title="Exercise breakdown"
-              subtitle={
-                muscle === 'all'
-                  ? 'All classified exercises'
-                  : `${titleCase(muscle)} exercises`
-              }
-            >
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Exercise</th>
-                      <th>Sets</th>
-                      <th>Reps</th>
-                      <th>Volume</th>
-                      <th>Avg</th>
-                      <th>Max</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {exercises.slice(0, 15).map((item) => (
-                      <tr
-                        key={item.exerciseId}
-                        onClick={() => setExercise(item.exerciseId)}
-                        className="clickable-row"
-                      >
-                        <td>
-                          <strong>{item.exerciseName}</strong>
-
-                          <small>
-                            {item.muscleGroups.map(titleCase).join(' · ') ||
-                              'Unclassified'}
-                          </small>
-                        </td>
-
-                        <td>{formatNumber(item.sets)}</td>
-                        <td>{formatNumber(item.reps)}</td>
-                        <td>{formatVolume(item.volume)}</td>
-                        <td>{formatWeight(item.averageWeight)}</td>
-                        <td>{formatWeight(item.maxWeight)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </ChartCard>
-
-            <ChartCard
               title="Muscle-group distribution"
-              subtitle="Share of performed volume"
+              subtitle="Share of performed volume, aggregated by muscle group"
             >
               <ResponsiveContainer width="100%" height={500}>
                 <PieChart>
                   <Pie
-                    data={muscles.slice(0, 10)}
+                    data={[...hierarchicalMuscles]
+                      .filter((group) => group.volume > 0)
+                      .sort((a, b) => b.volume - a.volume)
+                      .slice(0, 10)}
                     dataKey="volume"
-                    nameKey="muscleGroup"
+                    nameKey="label"
                     cx="50%"
                     cy="45%"
                     outerRadius={145}
                     stroke="#1c1c1e"
-                    label={({ x, y, textAnchor, muscleGroup }) => (
+                    label={({ x, y, textAnchor, name }) => (
                       <text
                         x={x}
                         y={y}
@@ -1259,16 +1527,20 @@ function App() {
                         fill={CHART_TEXT}
                         fontSize={12}
                       >
-                        {titleCase(muscleGroup)}
+                        {titleCase(String(name))}
                       </text>
                     )}
                   >
-                    {muscles.slice(0, 10).map((item, index) => (
-                      <Cell
-                        key={item.muscleGroup}
-                        fill={PIE_COLORS[index % PIE_COLORS.length]}
-                      />
-                    ))}
+                    {[...hierarchicalMuscles]
+                      .filter((group) => group.volume > 0)
+                      .sort((a, b) => b.volume - a.volume)
+                      .slice(0, 10)
+                      .map((item, index) => (
+                        <Cell
+                          key={item.muscleKey}
+                          fill={PIE_COLORS[index % PIE_COLORS.length]}
+                        />
+                      ))}
                   </Pie>
 
                   <Tooltip
@@ -1278,6 +1550,46 @@ function App() {
 
                   <Legend wrapperStyle={{ color: CHART_TEXT }} />
                 </PieChart>
+              </ResponsiveContainer>
+            </ChartCard>
+
+            <ChartCard
+              title="Workout session length"
+              subtitle="Duration of each workout session by date"
+            >
+              <ResponsiveContainer width="100%" height={500}>
+                <LineChart
+                  data={sessionTimeline}
+                  margin={{ left: 0, right: 20 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke={CHART_GRID}
+                    vertical={false}
+                  />
+
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(value) => String(value).slice(5)}
+                    {...AXIS_PROPS}
+                  />
+
+                  <YAxis
+                    tickFormatter={(value) => `${Math.round(Number(value))} min`}
+                    {...AXIS_PROPS}
+                  />
+
+                  <Tooltip content={<SessionTooltip />} />
+
+                  <Line
+                    type="monotone"
+                    dataKey="totalMinutes"
+                    name="Session length"
+                    stroke={CHART_GREEN}
+                    strokeWidth={2.5}
+                    dot={{ r: 3 }}
+                  />
+                </LineChart>
               </ResponsiveContainer>
             </ChartCard>
           </section>
@@ -1342,10 +1654,12 @@ function Metric({
 function ChartCard({
   title,
   subtitle,
+  action,
   children,
 }: {
   title: string
   subtitle: string
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -1355,9 +1669,88 @@ function ChartCard({
           <h2>{title}</h2>
           <p>{subtitle}</p>
         </div>
+
+        {action && <div className="card-action">{action}</div>}
       </div>
 
       {children}
+    </div>
+  )
+}
+
+function SessionLengthToggle({
+  shown,
+  onToggle,
+}: {
+  shown: boolean
+  onToggle: () => void
+}) {
+  return (
+    <Button
+      size="xs"
+      colorPalette="green"
+      variant={shown ? 'solid' : 'outline'}
+      onClick={onToggle}
+    >
+      {shown ? 'Hide session length' : 'Show session length'}
+    </Button>
+  )
+}
+
+function SessionTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: Array<{ payload?: unknown }>
+}) {
+  if (!active || !payload || payload.length === 0) return null
+
+  const point = payload[0].payload as SessionTimelinePoint | undefined
+
+  if (!point) return null
+
+  return (
+    <div style={TOOLTIP_STYLE} className="custom-tooltip">
+      <strong>{point.date}</strong>
+
+      {point.sessionNames.length > 0 && (
+        <div>{point.sessionNames.join(', ')}</div>
+      )}
+
+      <div>{formatDuration(point.totalMinutes)}</div>
+    </div>
+  )
+}
+
+function StackedTooltip({
+  active,
+  payload,
+  showSession = true,
+}: {
+  active?: boolean
+  payload?: Array<{ payload?: unknown }>
+  showSession?: boolean
+}) {
+  if (!active || !payload || payload.length === 0) return null
+
+  const point = payload[0].payload as RoutineGroupStackPoint | undefined
+
+  if (!point) return null
+
+  return (
+    <div style={TOOLTIP_STYLE} className="custom-tooltip">
+      <strong>{point.date}</strong>
+
+      <div>Volume: {formatVolume(point.volume)}</div>
+
+      {showSession && point.sessionMinutes > 0 && (
+        <div>Session length: {formatDuration(point.sessionMinutes)}</div>
+      )}
+
+      {point.workoutNames.length > 0 && (
+        <div>{point.workoutNames.join(', ')}</div>
+      )}
     </div>
   )
 }

@@ -19,5 +19,22 @@
     "recharts": "latest",
     "typescript": "latest",
     "vite": "latest"
-  }
+  },
+  "description": "Standalone React + Vite + TypeScript dashboard for analyzing an OpenGym backup JSON file.",
+  "main": "index.js",
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lynx-zenchar/opengym-analytics.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lynx-zenchar/opengym-analytics/issues"
+  },
+  "homepage": "https://github.com/lynx-zenchar/opengym-analytics#readme"
 }
