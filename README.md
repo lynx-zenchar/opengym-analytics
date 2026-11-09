@@ -2,6 +2,11 @@
 
 Standalone React + Vite + TypeScript dashboard for analyzing an OpenGym backup JSON file.
 
+<img width="1011" height="941" alt="image" src="https://github.com/user-attachments/assets/0d0e845f-873b-4dc3-96ab-b2ea9d4b879e" />
+<img width="1016" height="946" alt="image" src="https://github.com/user-attachments/assets/3c1df772-c6d9-4e27-bc93-1afe806fa325" />
+<img width="1022" height="905" alt="image" src="https://github.com/user-attachments/assets/6dcb390c-6ab1-4346-8c0c-55e8056f2500" />
+
+
 ## Requirements
 
 - Node.js 20+ recommended
